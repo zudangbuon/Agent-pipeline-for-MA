@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------- credentials
+# config.json holds the analysis VM's path and, if you put them there, the guest
+# credentials. It is plaintext. Never commit it -- copy config.example.json and
+# keep your real one untracked.
+host/config.json
+
+# ------------------------------------------------------------------- SAMPLES
+# Nothing derived from a live sample belongs in a repository, and a sample itself
+# certainly does not. These patterns are a backstop, not permission: keep samples
+# outside the working tree entirely.
+*.exe
+*.dll
+*.sys
+*.bin
+*.vmem
+*.vmss
+*.vmsn
+*.img
+samples/
+samples-host/
+
+# ------------------------------------------------------------------ artifacts
+# out/ is pipeline scratch: Procmon traces run to tens of megabytes per detonation,
+# and dropped-file dumps contain attacker-controlled content. The two walkthroughs
+# and the config decoder are documentation and ARE tracked (see the un-ignores).
+out/*
+!out/*walkthrough.md
+!out/decrypt_brbconfig.py
+
+# Volatility, Ghidra and cdb working directories
+*_ghidra/
+*.gpr
+*.rep/
+out/memory/
+out/debug/
+
+# -------------------------------------------------------------------- vendor
+# FakeNet-NG is not redistributed here. Download it from the Mandiant releases
+# page and drop the zip in vendor/.
+vendor/*
+!vendor/.gitkeep
+!vendor/README.md
+
+# --------------------------------------------------------------------- reports
+# Generated reports. Untracked by default: they are build output, and if they are
+# coursework they probably should not be public either. Delete these two lines if
+# you want them versioned.
+*.docx
+*.pdf
+
+# ---------------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# ------------------------------------------------------------------------- OS
+Thumbs.db
+desktop.ini
+.DS_Store

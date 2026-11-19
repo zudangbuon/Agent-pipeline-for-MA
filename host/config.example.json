@@ -1,0 +1,32 @@
+{
+  "_README": "Copy this file to config.json and edit the paths for your machine. Every machine-specific value in the pipeline lives here -- no path is hardcoded in the Python or PowerShell. Set MAL_CONFIG to point somewhere else if you prefer.",
+
+  "_credentials": "LEAVE guest_user AND guest_pass EMPTY and set GUEST_USER / GUEST_PASS in your environment instead. They are read from the environment first. This file is plaintext: a password written here is leaked the moment the folder is copied, shared, zipped or committed. The guest account must be a throwaway local account in the analysis VM and must never reuse a password from anywhere else.",
+
+  "_snapshot": "clean_snapshot must name a snapshot taken AFTER the guest has its password set and its tooling installed (Procmon at minimum). detonate reverts to it before and after every run, so anything missing from the snapshot is missing from every analysis. FakeNet-NG does NOT need to be in it -- setup-guest pushes FakeNet after the pre-run revert, so the install survives.",
+
+  "vmrun": "C:\\Program Files\\VMware\\VMware Workstation\\vmrun.exe",
+  "vmcli": "C:\\Program Files\\VMware\\VMware Workstation\\vmcli.exe",
+  "vmx": "C:\\path\\to\\your\\analysis-vm.vmx",
+
+  "clean_snapshot": "clean",
+  "guest_user": "",
+  "guest_pass": "",
+
+  "guest_root": "C:\\triage",
+  "guest_python": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+
+  "_allowed_net_types": "detonate REFUSES to run if the VM's NIC is not one of these. Do not add 'bridged' or 'nat' -- that gives a live sample a route to the internet and to your LAN.",
+  "allowed_net_types": ["hostonly", "pvn", "none", "custom"],
+
+  "_pull_rail": "Artifacts are copied out of the guest only if their extension is on this list and they are under the size cap. This is what stops a dropped payload reaching the host. Note that .png is on the list for VM console screenshots; the check is by extension only and does not inspect content, so remove it if you want the rail to be strictly text.",
+  "pull_allow_ext": [".json", ".csv", ".txt", ".log", ".c", ".md", ".xml", ".png", ".tsv"],
+  "pull_max_mb": 64,
+
+  "install_fakenet": true,
+  "_fakenet_zip": "Leave empty to use vendor/fakenet3.5.zip. Download FakeNet-NG yourself from the Mandiant releases page; it is not redistributed here.",
+  "fakenet_zip": "",
+
+  "detonate_timeout_sec": 120,
+  "static_max_decompile": 60
+}
