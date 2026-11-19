@@ -41,6 +41,16 @@ import sys
 TODO = "[TODO: %s]"
 
 
+def shot(what, tool=""):
+    """A screenshot marker, in the same shape the hand-written reports use.
+
+    Left visible on purpose: a labelled gap is better than a figure that is
+    silently missing. The tool name is included because the report is marked on
+    evidence, and 'which window this came from' is part of the evidence.
+    """
+    return "[SCREENSHOT: %s%s]" % (what, ("  --  %s" % tool) if tool else "")
+
+
 # ----------------------------------------------------------------- artifact IO
 def jload(path, default=None):
     """Artifacts from the guest carry a UTF-8 BOM; utf-8-sig handles both cases.
@@ -127,7 +137,11 @@ def sec1(pm, meta, strings):
         L += ["",
               "  " + TODO % "compare the compile timestamp against its siblings in the "
                             "same collection -- absolute plausibility is not enough, a "
-                            "faked timestamp can still be in the past"]
+                            "faked timestamp can still be in the past",
+              "",
+              shot("file hashes and size", "CFF Explorer, or the pe_meta.py terminal"),
+              shot("TimeDateStamp %s" % (ct.get("hex") or "in the file header"),
+                   "CFF Explorer -> File Header")]
 
     # ---- strings
     L += ["", "1.2. Notable strings", "-" * 20, ""]
@@ -184,7 +198,11 @@ def sec1(pm, meta, strings):
               "  cross-reference map and has been found missing a genuinely imported",
               "  symbol.",
               "",
-              "  " + TODO % "say which of these carry capability, and which are CRT noise"]
+              "  " + TODO % "say which of these carry capability, and which are CRT noise",
+              "",
+              shot("the import table", "CFF Explorer -> Import Directory"),
+              shot("the strings list", "Detect It Easy -> Strings, or Ghidra -> "
+                                       "Window -> Defined Strings")]
 
     # ---- packing
     L += ["", "1.3. Packer detection", "-" * 21, ""]
@@ -224,7 +242,10 @@ def sec1(pm, meta, strings):
               "  measures the loaded block, zero-padded to the virtual size, which",
               "  makes a mostly-padding packed section read as clean.",
               "",
-              "  " + TODO % "state the verdict: packed or not, and on which grounds"]
+              "  " + TODO % "state the verdict: packed or not, and on which grounds",
+              "",
+              shot("entropy, whole file and per section", "Detect It Easy -> Entropy"),
+              shot("the section table", "CFF Explorer -> Section Headers")]
     return L
 
 
@@ -278,6 +299,9 @@ def sec2(meta, funcs):
             L.append("    strings    : %s" % ", ".join(repr(s)[:40] for s in strs[:4]))
         L += ["    " + TODO % "what it does, and the addresses that show it",
               "    read it with:  q.py func %s" % f.get("ea"),
+              "    " + shot("decompiled %s" % f.get("name"),
+                            "Ghidra -> G -> %s -> Decompile window"
+                            % str(f.get("ea", "")).replace("0x", "")),
               ""]
 
     L += ["", "2.2. Program structure", "-" * 22, "",
@@ -361,6 +385,9 @@ def sec3(dyn_dir):
           "  A snapshot diff CANNOT see a file created and deleted inside the run",
           "  window. 'dropped.json shows nothing new' is not 'nothing was written' --",
           "  check Procmon:   dyn.py --dir <d> procmon <regex>",
+          "",
+          shot("the sample's file operations", "Procmon, filtered to the sample"),
+          shot("the dropped file on disk", "Explorer in the target directory"),
           ""]
 
     # ---- registry
@@ -376,7 +403,10 @@ def sec3(dyn_dir):
     for r in rchg[:10]:
         L.append("  [changed] %s : %s -> %s"
                  % (r.get("key"), str(r.get("before"))[:30], str(r.get("after"))[:30]))
-    L.append("")
+    L += ["",
+          shot("the registry value the sample wrote",
+               "Regedit at the key above, or Procmon's RegSetValue"),
+          ""]
 
     # ---- processes
     procs = jload(os.path.join(dyn_dir, "processes.json"), []) or []
@@ -433,7 +463,10 @@ def sec3(dyn_dir):
     L += ["",
           "  " + TODO % "if a user-agent appears, check whether it is IN the binary's "
                         "strings. A UA supplied by URLMON/WinINet describes the "
-                        "ANALYSIS MACHINE and is NOT an indicator"]
+                        "ANALYSIS MACHINE and is NOT an indicator",
+          "",
+          shot("the sample's request", "FakeNet-NG console"),
+          shot("the Diverter line naming the sample's pid", "FakeNet-NG console")]
 
     # ---- persistence coverage, stated honestly every time
     auto = jload(os.path.join(dyn_dir, "autoruns.json"), {}) or {}

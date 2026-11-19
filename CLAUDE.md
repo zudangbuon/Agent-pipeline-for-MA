@@ -844,6 +844,84 @@ the listing is truncated. To see where a sample actually stopped, read `procmon.
 with a real CSV reader and slice the tail -- `csv.DictReader` on
 `encoding="utf-8-sig"`, filtered on `Process Name`.
 
+## `vmrun start ... gui` deadlocked on a pipe -- the pipeline could not start a stopped VM
+
+Fixed 2026-11-19. **An earlier version of this section blamed a slow cold boot. That
+was wrong**, and it is recorded here because the wrong diagnosis is instructive: every
+symptom fitted it.
+
+`vmrun()` ran everything through `subprocess.run(capture_output=True)`.
+`vmrun start <vmx> gui` launches the **VMware Workstation UI**, which inherits the write
+end of those pipes and never exits. `subprocess.run` waits for EOF on the pipes, so it
+blocks. The `timeout` does not save you: it kills the direct child (`vmrun`), then calls
+`communicate()` again to drain -- and that second call blocks forever on the pipe the
+surviving grandchild still holds.
+
+Measured: a detonation sat **34 minutes** inside `ensure_running`, with `vmrun` long
+dead and the UI still up.
+
+**`clean-nodefender` IS a powered-off snapshot**, which is what made this reachable:
+`detonate` reverts first, the VM goes off, and `ensure_running` then calls `start`. The
+bug stayed invisible for a long time because during development the VM was usually
+already running, so `start` was never called -- the successful getdown run of 2026-11-10
+never touched this path. The pipeline could not start a stopped VM **at all**.
+
+Fix: `vmrun(..., capture=False)` sends output to `DEVNULL` instead of a pipe, and
+`ensure_running` passes it for `start`. Same path, measured before and after:
+
+| | before | after |
+|---|---|---|
+| start a stopped VM | **hung, 34 min** | **16.8 s** |
+
+### What a hung detonation actually looks like, and how to tell
+
+The misreading cost two killed runs and two manual reverts. All of these are true of a
+healthy run in its first minute, so none of them is evidence on its own:
+
+- no `setup-guest` line in `audit.log` yet
+- no run directory on the host yet
+- the Python process using ~0.1 s of CPU
+- **no `vmrun` child process** at the moment you look
+- an empty output file -- Python buffers stdout when it is not a TTY
+
+What actually distinguishes them is **elapsed time against a known good run**: with the
+fix in place, `start` → `setup-guest` is seconds, and a whole `--mode full` detonation
+is about 4-5 minutes. Past ~10 minutes with no `setup-guest` line, something is wrong.
+
+**Rules out of this:**
+
+1. **Use `python -u`.** Without it the progress output is buffered and the log stays
+   empty, which removes the one signal that settles this immediately.
+2. **Never pipe `detonate` into `tail`.** It hides output until the process exits,
+   which is exactly when you no longer need it.
+3. After any killed or interrupted run, check `audit.log` for a matching
+   `detonate END` and revert manually if it is absent -- a kill from outside skips the
+   `finally`.
+4. **Watch for this shape generally.** Any `subprocess.run(capture_output=True)` on a
+   command that spawns a lasting GUI or service has the same defect, and the timeout
+   will not rescue it.
+
+### The control runs green -- first verified 2026-11-20
+
+`--mode full` end to end on `tests/control/control.bat`, elevated, 4 min 11 s:
+
+```
+passed 10   failed 0   skipped 0   changed 0
+```
+
+Everything the control does was seen, including the two cases that exist to catch a
+blind monitor rather than to confirm the happy path:
+
+- **`ephemeral_file` PASS** -- a file created and deleted inside the run window. The
+  snapshot diff cannot see it by construction; Procmon did.
+- **`ifeo_nested_value` ok (ABSENT, as asserted)** -- the registry snapshot still does
+  not descend into subkeys, so the IFEO `Debugger` value stays invisible while its
+  parent subkey is visible. The blind spot is still exactly where it was documented.
+
+So the monitors rewritten on 2026-11-09 are now verified against a target whose
+behaviour was known in advance, which is what this file had been telling you to do
+since before the control existed.
+
 ## SCOPE: three criteria (set 2026-11-19)
 
 The deliverable is **Basic static, Advanced static, Basic dynamic** -- plus a conclusion.

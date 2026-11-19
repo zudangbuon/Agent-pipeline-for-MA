@@ -22,7 +22,8 @@ ROOT = os.path.dirname(PIPE)                 # the coursework tree
 # Plain text only. The reports live in report/, grouped by collection.
 TXTDIR = os.path.join(ROOT, "report", "for610")
 os.makedirs(TXTDIR, exist_ok=True)
-TXT = os.path.join(TXTDIR, "brbbot-report.txt")
+# ONE canonical report per sample lives in report/. This is brbbot's.
+TXT = os.path.join(TXTDIR, "brbbot.txt")
 pm = json.load(open(os.path.join(PIPE, "out", "static", "brbbot-static",
                                  "pe_meta.json"), encoding="utf-8"))
 

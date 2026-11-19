@@ -617,13 +617,17 @@ DATA = {
 
 
 def main():
-    # Plain text only. The template .docx is still READ, because it is what
-    # supplies the row labels and their order -- but nothing is written to it.
-    txtdir = os.path.join(ROOT, "report", "for610")
-    os.makedirs(txtdir, exist_ok=True)
+    # This is brbbot in the 58-row institutional layout -- an ALTERNATIVE format,
+    # kept as a worked example. brbbot's canonical report is the five-section one
+    # from fill_report_brbbot_freeform.py, so this writes to out/ rather than to
+    # report/: exactly one report per sample lives there, and a second format
+    # would quietly recreate the duplicate this directory was just cleaned of.
+    #
+    # The template .docx is READ for its row labels and their order; nothing is
+    # ever written back to it.
+    out = os.path.join(PIPE, "out", "brbbot-58row-format.txt")
     report_writer.render_table_txt(
-        TPL, DATA, "Malware Analysis Report - brbbot.exe",
-        os.path.join(txtdir, "brbbot-report-template.txt"))
+        TPL, DATA, "Malware Analysis Report - brbbot.exe", out)
 
 
 if __name__ == "__main__":

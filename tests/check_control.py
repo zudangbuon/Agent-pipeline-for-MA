@@ -101,7 +101,9 @@ def main():
     print("run      : %s" % d)
     print("elevated : %s%s" % (elevated, "" if m else "  (NOT RECORDED in detonate.log)"))
     print("fakenet  : summary=%s  log says up=%s" % (fakenet, fakenet_up))
-    print("mode     : %s   timeout=%ss" % (summary.get("mode"), summary.get("timeout")))
+    # the key is timeout_sec, not timeout -- summary.json names it that way
+    print("mode     : %s   timeout=%ss" % (summary.get("mode"),
+                                           summary.get("timeout_sec", "?")))
     print()
 
     reg = load(d, "registry.json", {}) or {}

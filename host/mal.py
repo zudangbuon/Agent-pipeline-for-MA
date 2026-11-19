@@ -66,7 +66,22 @@ def audit(line):
         fh.write("%s  %s\n" % (dt.datetime.now().isoformat(timespec="seconds"), line))
 
 
-def vmrun(c, *args, creds=False, timeout=600, check=True, quiet=False):
+def vmrun(c, *args, creds=False, timeout=600, check=True, quiet=False, capture=True):
+    """Run a vmrun verb.
+
+    capture=False is REQUIRED for any verb that leaves a long-lived process holding
+    our pipes -- in practice `start ... gui`, which launches the VMware Workstation
+    UI. With capture_output=True, subprocess.run() waits for EOF on the pipes, and
+    the UI inherits the write end and never closes it. The `timeout` does NOT save
+    you: subprocess.run kills the direct child, then calls communicate() again to
+    drain, and that second call blocks forever on the pipe the grandchild still
+    holds. Measured: a detonation sat 34 minutes in `ensure_running` with vmrun long
+    dead and the UI still up.
+
+    This was invisible for a long time because `ensure_running` only calls `start`
+    when the VM is NOT already running, and during development it usually was. It
+    means the pipeline could not start a stopped VM at all.
+    """
     cmd = [c["vmrun"], "-T", "ws"]
     if creds:
         if not c["guest_user"]:
@@ -77,10 +92,16 @@ def vmrun(c, *args, creds=False, timeout=600, check=True, quiet=False):
     if not quiet:
         print("  $ %s" % " ".join(('"%s"' % s if " " in s else s) for s in shown[3:] if s))
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if capture:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        else:
+            # Send output to the null device rather than a pipe, so a surviving
+            # grandchild cannot hold it open and deadlock the drain.
+            p = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=timeout)
     except subprocess.TimeoutExpired:
         die("vmrun timed out after %ss: %s" % (timeout, " ".join(shown[3:])))
-    out = (p.stdout or "") + (p.stderr or "")
+    out = (getattr(p, "stdout", None) or "") + (getattr(p, "stderr", None) or "")
     if check and p.returncode != 0:
         die("vmrun failed (%d): %s" % (p.returncode, out.strip()))
     return out.strip()
@@ -127,7 +148,9 @@ def is_running(c):
 def ensure_running(c, gui=True):
     if not is_running(c):
         print("[*] starting VM")
-        vmrun(c, "start", c["vmx"], "gui" if gui else "nogui", timeout=300)
+        # capture=False: `start ... gui` leaves the VMware UI holding our pipes.
+        vmrun(c, "start", c["vmx"], "gui" if gui else "nogui", timeout=300,
+              capture=False)
         print("[*] waiting for VMware Tools")
         vmrun(c, "runProgramInGuest", c["vmx"],
               "C:\\Windows\\System32\\cmd.exe", "/c", "exit",
