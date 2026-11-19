@@ -21,7 +21,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))     # .../agent-pipeline/host
 PIPE = os.path.dirname(HERE)                          # .../agent-pipeline
 ROOT = os.path.dirname(PIPE)                          # the coursework tree
 TPL = report_writer.template_path(ROOT)
-OUT = os.path.join(PIPE, "out", "getdown-Malware-Analysis-Report.docx")
 STATIC = os.path.join(PIPE, "out", "static", "getdown")
 DYN = os.path.join(PIPE, "out", "dynamic", "cd78cf4af8e3-20261110-145417")
 
@@ -777,12 +776,13 @@ DATA = {
 
 
 def main():
-    title = "Malware Analysis Report - getdown.exe"
-    report_writer.render(TPL, DATA, title, OUT)
+    # Plain text only. The template .docx is still READ, because it is what
+    # supplies the row labels and their order -- but nothing is written to it.
     txtdir = os.path.join(ROOT, "report", "for610")
     os.makedirs(txtdir, exist_ok=True)
     report_writer.render_table_txt(
-        TPL, DATA, title, os.path.join(txtdir, "getdown-report-template.txt"))
+        TPL, DATA, "Malware Analysis Report - getdown.exe",
+        os.path.join(txtdir, "getdown-report-template.txt"))
 
 
 if __name__ == "__main__":

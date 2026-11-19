@@ -14,6 +14,7 @@ The agent calls this instead of cat-ing whole dumps, so context stays small.
   python q.py callees <ea>             direct callees
   python q.py imports [dllsubstr]      imports grouped by DLL
   python q.py capa [N]                 capa rules, if capa.json present
+  python q.py plan                     step-by-step walkthrough + what to screenshot
 
 Env: TRIAGE_OUT (default: ../out next to this script)
 """
@@ -23,12 +24,28 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.environ.get("TRIAGE_OUT") or os.path.join(os.path.dirname(HERE), "out")
 
 
-def load(name, default=None):
+_REQUIRED = object()   # sentinel: distinct from any legitimate default, None included
+
+
+def load(name, default=_REQUIRED):
+    """Read an artifact. Missing is fatal only when no default was supplied.
+
+    The default used to be `None` and the test was `if default is not None`,
+    which made it impossible to say "optional, and the fallback value is None".
+    raw_sections() did exactly that -- `load("pe_meta.json", None)` -- so its
+    documented fallback to Ghidra's own figures was unreachable and a static tag
+    without pe_meta.json killed `q.py summary` halfway through instead of
+    degrading. A sentinel separates "no default" from "the default is None".
+    """
     p = os.path.join(OUT, name)
     if not os.path.exists(p):
-        if default is not None:
+        if default is not _REQUIRED:
             return default
-        sys.exit("missing %s -- run the dumper in the VM and copy the out/ dir here" % p)
+        sys.exit("missing %s\n"
+                 "        Static analysis runs on the HOST. Generate it with:\n"
+                 "          python host/ghidra_dump.py <sample> %s\n"
+                 "          python host/pe_meta.py    <sample> --json %s"
+                 % (p, OUT, os.path.join(OUT, "pe_meta.json")))
     with open(p, encoding="utf-8", errors="replace") as fh:
         return json.load(fh)
 

@@ -19,9 +19,7 @@ import report_writer
 HERE = os.path.dirname(os.path.abspath(__file__))
 PIPE = os.path.dirname(HERE)
 ROOT = os.path.dirname(PIPE)                 # the coursework tree
-OUT = os.path.join(PIPE, "out", "brbbot-Report-freeform.docx")
-# The submission copies live in report/, grouped by collection; out/ is pipeline
-# scratch and gets overwritten on every run.
+# Plain text only. The reports live in report/, grouped by collection.
 TXTDIR = os.path.join(ROOT, "report", "for610")
 os.makedirs(TXTDIR, exist_ok=True)
 TXT = os.path.join(TXTDIR, "brbbot-report.txt")
@@ -546,9 +544,8 @@ DOC = [
 
 
 def main():
-    title = "Malware Analysis Report - brbbot.exe"
-    report_writer.render_freeform(DOC, title, OUT)
-    report_writer.render_freeform_txt(DOC, title, TXT)
+    report_writer.render_freeform_txt(
+        DOC, "Malware Analysis Report - brbbot.exe", TXT)
 
 
 if __name__ == "__main__":

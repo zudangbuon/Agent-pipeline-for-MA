@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Generate the dynamic CONTROL: a benign target whose behaviour is known exactly.
+
+Why this exists
+---------------
+CLAUDE.md says "re-run the control after changing the monitors", and three separate
+defects in this pipeline were caught only because a known-behaviour target disagreed
+with the output. But the control itself was never committed, so after the monitors
+were rewritten there was nothing to re-run. This file is that missing piece.
+
+The control is a .bat, deliberately: every action it takes is readable in six lines
+of plain text, so nobody has to trust a binary to verify the instrumentation. It is
+benign -- it writes marker files, points registry values at calc.exe, starts a
+service that runs calc.exe on demand, pings loopback and talks to a hostname that
+only exists inside FakeNet. It installs real persistence, which is the point: the
+VM is reverted afterwards.
+
+  python tests/make_control.py <outdir>
+      writes <outdir>/control.bat and <outdir>/control_expect.json
+
+Then:
+  python host/mal.py detonate <outdir>/control.bat --mode full --timeout 60 --elevated
+  python tests/check_control.py <outdir>/control_expect.json out/dynamic/<tag>
+
+Each numbered step below is checked by check_control.py. Steps 2, 5 and 8 exist to
+test specific, documented blind spots rather than the happy path:
+
+  step 2  a file created and deleted inside the run window. Invisible to the
+          baseline/after snapshot diff; Procmon is the only witness.
+  step 5  a registry value nested ONE level below a watched key. Snap-Reg records
+          each watched key's own values plus the NAMES of its immediate subkeys, so
+          the new IFEO subkey should appear and the Debugger value inside it should
+          not. If that value ever does show up, the registry snapshot got deeper and
+          this expectation is what will say so.
+  step 8  DNS and TCP to a hostname that exists nowhere but FakeNet. Distinguishes
+          "the sample made no network requests" from "FakeNet was not running",
+          which is the distinction the getdown run showed actually matters.
+"""
+import json
+import os
+import sys
+
+MARKER = "CTRL_9f3a"                 # files, registry values, service name
+HOST = "ctrl-9f3a.control.test"      # DNS + TCP target; .test is reserved (RFC 6761)
+URI = "/control-probe"
+
+BAT = r"""@echo off
+REM ===================================================================
+REM   PIPELINE CONTROL  --  THIS IS NOT MALWARE
+REM
+REM   A benign known-behaviour target used to verify that the dynamic
+REM   monitors still see what they are supposed to see. Every action is
+REM   listed in control_expect.json and checked by check_control.py.
+REM
+REM   It DOES install real persistence (Run keys, a service). That is
+REM   deliberate -- it is what the monitors are being tested on. Only
+REM   ever run it in the analysis VM, which is reverted afterwards.
+REM ===================================================================
+
+set CTRL=__MARKER__
+set CHOST=__HOST__
+
+REM --- 1. drop a file that survives the run -------------------------
+echo control-marker-%CTRL% > "%APPDATA%\%CTRL%_dropped.txt"
+
+REM --- 2. create then delete, inside the run window -----------------
+REM     Lifetime fits between the two snapshots, so the diff cannot see
+REM     it. Procmon must.
+echo ephemeral > "%APPDATA%\%CTRL%_ephemeral.txt"
+del "%APPDATA%\%CTRL%_ephemeral.txt"
+
+REM --- 3. HKCU Run key (no admin needed) ----------------------------
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v %CTRL%_hkcu ^
+    /t REG_SZ /d "C:\Windows\System32\calc.exe" /f
+
+REM --- 4. HKLM Run key (admin only; ACCESS DENIED unelevated) -------
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v %CTRL%_hklm ^
+    /t REG_SZ /d "C:\Windows\System32\calc.exe" /f
+
+REM --- 5. a value NESTED below a watched key ------------------------
+REM     The subkey name should be visible; the Debugger value inside it
+REM     should not be. See the module docstring.
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\%CTRL%_victim.exe" ^
+    /v Debugger /t REG_SZ /d "C:\Windows\System32\calc.exe" /f
+
+REM --- 6. a service -------------------------------------------------
+sc create %CTRL%_svc binPath= "C:\Windows\System32\calc.exe" start= demand
+
+REM --- 7. spawn a child process -------------------------------------
+start "" /b cmd.exe /c "ping -n 3 127.0.0.1 >nul"
+
+REM --- 8. DNS + TCP + HTTP to a host only FakeNet can answer --------
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try { [System.Net.Dns]::GetHostAddresses('%CHOST%') | Out-Null } catch {};" ^
+  "try { (New-Object Net.WebClient).DownloadString('http://%CHOST%__URI__') | Out-Null } catch {}"
+
+REM give the monitors a moment to record the tail of this
+ping -n 3 127.0.0.1 >nul
+exit /b 0
+"""
+
+EXPECT = {
+    "marker": MARKER,
+    "host": HOST,
+    "uri": URI,
+    "note": "Generated by tests/make_control.py. Each check names the artifact that "
+            "must contain the evidence, so a failure says which monitor went blind.",
+    "checks": [
+        {
+            "id": "dropped_file",
+            "step": 1,
+            "artifact": "dropped.json",
+            "expect": "a new file matching %s_dropped.txt" % MARKER,
+            "needs_admin": False,
+            "why": "the plainest case: a file that exists before and after the diff",
+        },
+        {
+            "id": "ephemeral_file",
+            "step": 2,
+            "artifact": "procmon.csv",
+            "expect": "CreateFile AND a delete disposition on %s_ephemeral.txt" % MARKER,
+            "needs_admin": False,
+            "why": "created and deleted inside the run window -- the snapshot diff is "
+                   "blind to it by construction, so only Procmon can catch it. This is "
+                   "the check that would have caught brbbot's rollback.",
+            "must_not_appear_in": "dropped.json",
+        },
+        {
+            "id": "hkcu_run",
+            "step": 3,
+            "artifact": "registry.json",
+            "expect": "new value %s_hkcu under HKCU ...\\CurrentVersion\\Run" % MARKER,
+            "needs_admin": False,
+            "why": "a watched key's own value, depth 0 -- must always be seen",
+        },
+        {
+            "id": "hklm_run",
+            "step": 4,
+            "artifact": "registry.json",
+            "expect": "new value %s_hklm under HKLM ...\\CurrentVersion\\Run" % MARKER,
+            "needs_admin": True,
+            "why": "same shape as step 3 but privileged. Unelevated this must FAIL, "
+                   "which is itself the expected result -- it is how the run records "
+                   "that --elevated changes the persistence answer.",
+        },
+        {
+            "id": "ifeo_subkey",
+            "step": 5,
+            "artifact": "registry.json",
+            "expect": "new subkey %s_victim.exe under Image File Execution Options" % MARKER,
+            "needs_admin": True,
+            "why": "IFEO IS watched, and Snap-Reg records immediate subkey NAMES",
+        },
+        {
+            "id": "ifeo_nested_value",
+            "step": 5,
+            "artifact": "registry.json",
+            "expect": "the Debugger value inside that subkey",
+            "needs_admin": True,
+            "expected_result": "ABSENT",
+            "why": "KNOWN BLIND SPOT, asserted deliberately. Snap-Reg does not descend "
+                   "into subkeys, so the value is invisible while the subkey is not. "
+                   "If this ever starts PASSING, the registry snapshot got deeper and "
+                   "CLAUDE.md's coverage note needs updating.",
+        },
+        {
+            "id": "service",
+            "step": 6,
+            "artifact": "autoruns.json",
+            "expect": "new service %s_svc" % MARKER,
+            "needs_admin": True,
+            "why": "Snap-Svc, a full Win32_Service diff",
+        },
+        {
+            "id": "child_process",
+            "step": 7,
+            "artifact": "procmon.csv",
+            "expect": "a Process Create whose Detail names a child pid, from the "
+                      "control's own process tree",
+            "needs_admin": False,
+            "why": "the guest-side filter resolves the sample's process tree before "
+                   "dropping noise. cmd.exe and ping.exe are ordinary OS binaries, so "
+                   "this is exactly the case where a name-based noise filter would "
+                   "throw away the sample's own children.",
+        },
+        {
+            "id": "dns",
+            "step": 8,
+            "artifact": "fakenet.log",
+            "expect": "a DNS request for %s" % HOST,
+            "needs_admin": False,
+            "needs_fakenet": True,
+            "why": "the hostname exists nowhere else, so a hit cannot be OS traffic",
+        },
+        {
+            "id": "http",
+            "step": 8,
+            "artifact": "fakenet.log",
+            "expect": "GET %s with Host: %s" % (URI, HOST),
+            "needs_admin": False,
+            "needs_fakenet": True,
+            "why": "proves the full path: DNS answered, TCP accepted, request served. "
+                   "Without FakeNet this fails and the run looks like a target that "
+                   "made no network requests.",
+        },
+    ],
+}
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__.strip().splitlines()[0] +
+                 "\n\nusage: python tests/make_control.py <outdir>")
+    d = os.path.abspath(sys.argv[1])
+    os.makedirs(d, exist_ok=True)
+
+    bat = (BAT.replace("__MARKER__", MARKER)
+              .replace("__HOST__", HOST)
+              .replace("__URI__", URI))
+    bat_path = os.path.join(d, "control.bat")
+    # CRLF: a .bat with bare LF line endings misbehaves in cmd.exe.
+    with open(bat_path, "w", encoding="ascii", newline="\r\n") as fh:
+        fh.write(bat)
+
+    exp_path = os.path.join(d, "control_expect.json")
+    with open(exp_path, "w", encoding="utf-8") as fh:
+        json.dump(EXPECT, fh, indent=2)
+
+    print("wrote %s (%d bytes)" % (bat_path, os.path.getsize(bat_path)))
+    print("wrote %s (%d checks)" % (exp_path, len(EXPECT["checks"])))
+    print()
+    print("marker : %s" % MARKER)
+    print("host   : %s" % HOST)
+    print()
+    print("next:")
+    print("  python host/mal.py detonate %s --mode full --timeout 60 --elevated"
+          % bat_path)
+    print("  python tests/check_control.py %s out/dynamic/<tag>" % exp_path)
+
+
+if __name__ == "__main__":
+    main()

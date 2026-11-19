@@ -17,7 +17,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))     # .../agent-pipeline/host
 PIPE = os.path.dirname(HERE)                          # .../agent-pipeline
 ROOT = os.path.dirname(PIPE)                          # the coursework tree
 TPL = os.path.join(ROOT, "References", "Malware_Analysis_Report_Template.docx")
-OUT = os.path.join(PIPE, "out", "brbbot-Malware-Analysis-Report.docx")
 if not os.path.isfile(TPL):
     sys.exit("template not found: %s" % TPL)
 
@@ -618,14 +617,13 @@ DATA = {
 
 
 def main():
-    # cell_of / write_cell live in report_writer so this script and
-    # fill_report_getdown.py cannot drift apart on the label-row rule.
-    title = "Malware Analysis Report - brbbot.exe"
-    report_writer.render(TPL, DATA, title, OUT)
+    # Plain text only. The template .docx is still READ, because it is what
+    # supplies the row labels and their order -- but nothing is written to it.
     txtdir = os.path.join(ROOT, "report", "for610")
     os.makedirs(txtdir, exist_ok=True)
     report_writer.render_table_txt(
-        TPL, DATA, title, os.path.join(txtdir, "brbbot-report-template.txt"))
+        TPL, DATA, "Malware Analysis Report - brbbot.exe",
+        os.path.join(txtdir, "brbbot-report-template.txt"))
 
 
 if __name__ == "__main__":

@@ -61,20 +61,25 @@ extras for two extra report sections.
 
 ## Analysis criteria
 
-The pipeline is organised to answer the criteria a malware report is usually marked
-against:
+The pipeline targets **three criteria**, and `host/make_report.py` emits a report
+skeleton covering all of them for any sample:
 
 | Criterion | Tool | Needs |
 |---|---|---|
 | **1. Basic static** — file info, hashes, timestamp, imphash, strings, packing | `pe_meta.py`, `q.py` | nothing (pure stdlib) |
 | **2. Advanced static** — function-by-function reverse engineering | `ghidra_dump.py` → `q.py` | **Ghidra** |
 | **3. Basic dynamic** — files, registry, processes, network | `mal.py detonate` → `dyn.py` | **VMware** |
-| **4. Advanced dynamic** — debugging | `dbg.py` | cdb — *guest half not built, see Status* |
-| **5. Conclusion** — IOCs, capabilities, persistence, impact | your synthesis | — |
 
-Two optional extras, if your report format has rows for them: **memory analysis**
-(`mem.py`, Volatility 3) and **open-source research** (no tooling — look samples up **by
-hash**; never upload one).
+Criterion 1 needs no third-party tool at all. Criterion 2 needs Ghidra. Only criterion 3
+needs the VM — so two thirds of a report can be produced on a machine with no hypervisor.
+
+**Optional paths**, outside the three criteria and not required by anything above:
+
+| | Tool | For |
+|---|---|---|
+| Advanced dynamic (debugging) | `dbg.py` | cdb — **host-side control only**, see Status |
+| Memory analysis | `mem.py` | Volatility 3 over a RAM image |
+| Open-source research | none | look samples up **by hash**; never upload one |
 
 ## Quick start
 
@@ -136,6 +141,17 @@ inside the VM; nothing is pushed), `--in-place` (keeps a lab `.exe` beside its `
 Run static **before** dynamic. If static says the sample is packed, detonation is how you
 get the unpacked behaviour — but know that is why you are running it.
 
+### Report — all three criteria, any sample
+
+```bash
+python host/make_report.py --static out/static/<tag> \
+                           --dynamic out/dynamic/<tag> \
+                           --out report/<collection>/<name>.txt
+```
+
+Drop `--dynamic` to produce criteria 1 and 2 only; section 3 then says explicitly that
+it was not performed, rather than going quietly missing. See **Reports** below.
+
 ## Configuration
 
 Everything machine-specific lives in `host/config.json`. **No path is hardcoded in the
@@ -189,6 +205,24 @@ retaken to add it.
 
 Also worth setting: `numvcpus` ≥ 2. A single core is a known sandbox tell and some samples
 stay dormant on it.
+
+### Verifying the monitors
+
+Instrumentation that silently stops recording is the failure mode that matters here: it
+produces a clean-looking run and a wrong conclusion. Re-run the control after changing
+anything in `vm/detonate.ps1`:
+
+```bash
+python tests/make_control.py tests/control
+python host/mal.py detonate tests/control/control.bat --mode full --timeout 60 --elevated
+python tests/check_control.py tests/control/control_expect.json out/dynamic/<tag>
+```
+
+The control is a benign, human-readable `.bat` that does eight known things — drops a
+file, creates and immediately deletes another, writes Run keys at both hives, nests a
+value under a watched key, installs a service, spawns a child, and makes DNS and HTTP
+requests to a hostname only FakeNet can answer. `check_control.py` reports pass/fail per
+behaviour and names the artifact that should have carried the evidence.
 
 ## Safety rails — enforced in code, not in prose
 
@@ -285,17 +319,46 @@ Seven distinct causes produced that false reading during development:
 
 ## Reports
 
-Report generation is the one part that is example-specific. Two output shapes are
-included, both built from the same artifacts and both emitting `.docx` and `.txt` from the
-same content so they cannot drift:
+```bash
+python host/make_report.py --static out/static/<tag> \
+                           [--dynamic out/dynamic/<tag>] \
+                           --out report/<collection>/<name>.txt
+```
+
+`make_report.py` works for **any** sample: it reads the artifacts and writes a plain-text
+report covering the three criteria plus a conclusion. The measurable facts come out of
+the artifacts; everything that is genuinely judgement is marked `[TODO: ...]` and the
+footer counts them, so an unfinished report is obvious rather than quietly incomplete.
+`--dynamic` is optional — without it, section 3 is an explicit stub rather than a silent
+omission.
+
+Two things it does that are easy to forget by hand:
+
+- **It states the coverage caveats every time.** Section 3 always lists which persistence
+  classes were checked and which are not monitored at all, because "no persistence found"
+  and "no persistence exists" are different claims and only the first is supportable.
+- **It separates the instrument from the sample.** A FakeNet run installs a `WinDivert`
+  service and redirects traffic to `192.0.2.123`; both appear in the artifacts and
+  neither is sample behaviour. The generated report says so where they appear.
+
+### Worked examples, finished by hand
+
+The `fill_report_*.py` scripts are two **completed** reports rather than generators —
+their analysis prose is written out, which is what a finished report looks like next to
+`make_report.py`'s skeleton. One targets a 58-row institutional template, the other a
+free-form 5-section structure. Output is **plain text**:
 
 - a **58-row institutional template** (`fill_report.py`, `fill_report_getdown.py`)
 - a **5-section free-form structure** (`fill_report_brbbot_freeform.py`)
 
 `host/report_writer.py` holds the shared mechanics. Per-sample content lives in the
 `fill_report_*.py` scripts as a plain data structure. To report on your own sample, copy
-the closest one and replace its content. The institutional template is read from outside
-this directory and is never modified.
+the closest one and replace its content.
+
+The institutional template `.docx` is **read** — it is what supplies the row labels and
+their order, so they are never retyped — but nothing is ever written back to it, and no
+`.docx` is produced. `report_writer.py` still carries `.docx` writers (`render`,
+`render_freeform`) if you want them; the fillers no longer call them.
 
 ## Layout
 
@@ -308,8 +371,9 @@ host/q.py                query static artifacts
 host/dyn.py              query dynamic artifacts
 host/mem.py              query a memory image via Volatility 3        (optional path)
 host/dbg.py              cdb driver + parser; host-side control only  (optional path)
-host/report_writer.py    shared report mechanics (docx + txt)
-host/fill_report*.py     per-sample report content — replace with your own
+host/make_report.py      THE report generator: any sample, three criteria, plain text
+host/report_writer.py    shared rendering mechanics for the worked examples
+host/fill_report*.py     two reports finished by hand, as examples
 
 vm/detonate.ps1          guest runner: basic, or full with Procmon + FakeNet
 vm/install_fakenet.ps1   unpacks FakeNet in the guest, writes the marker detonate reads
@@ -317,7 +381,9 @@ vm/pe_exports.py         parse a collection's PE headers + exports (pure Python)
 vm/dump_static.py        DEAD — kept as a record; IDA Freeware has no IDAPython
 vm/run_triage.ps1        DEAD — superseded by host/ghidra_dump.py
 
-tests/                   synthetic artifact generators for smoke-testing q.py and dyn.py
+tests/make_control.py    generates the known-behaviour CONTROL (a readable .bat)
+tests/check_control.py   checks a control detonation, pass/fail per behaviour
+tests/make_fake_*.py     synthetic artifacts for smoke-testing q.py and dyn.py
 vendor/                  put fakenet3.5.zip here (not redistributed)
 
 out/static/<tag>/        per-sample static artifacts
@@ -329,12 +395,16 @@ out/audit.log            every VM operation, appended
 
 ## Status
 
-| Path | |
+| Criterion | |
 |---|---|
-| Static | **working** — validated across two sample collections; the packing heuristic was checked against 9 samples including 4 real packers |
-| Dynamic | **working** — `--mode basic` and `--mode full`, including FakeNet-NG |
-| Memory | **working** — validated on three memory images |
-| Debugging | **host-side control only.** The guest half does not exist: `dbg.py` can generate and parse a cdb session, and is proven against a benign host binary, but nothing runs cdb inside the VM. The debugging criterion has no first-hand data. |
+| 1. Basic static | **working** — validated across two sample collections; the packing heuristic was checked against 9 samples including 4 real packers |
+| 2. Advanced static | **working** — Ghidra with the decompiler; both worked examples recovered their hardest finding statically (an RC4 key compiled into the binary, and an XOR-encoded C2 URL) |
+| 3. Basic dynamic | **working** — `--mode basic` and `--mode full`, including FakeNet-NG |
+
+Optional paths: **memory** works (validated on three images). **Debugging** is
+host-side control only — `dbg.py` generates and parses a cdb session and is proven
+against a benign host binary, but nothing runs cdb inside the VM, so that path has no
+first-hand data for any sample.
 
 **Not covered by any monitor**, so silence about them means nothing: WMI event
 subscriptions, COM hijacking, DLL search-order hijacking, AppInit_DLLs, AppCertDlls. The

@@ -599,12 +599,48 @@ only the entropy test caught it. The two rules are complementary -- keep both.
 
 ## Validated behaviour of the pipeline
 
-`--mode basic` and `--mode full` are both proven, against a control with known
-behaviour (`tests/`-style .bat that drops a file, writes a Run key, spawns a child and
-opens a socket) and against a real sample. Re-run the control after changing the
-monitors: three separate defects were caught only because a known-behaviour control
-disagreed with the output, including a Procmon noise filter that was hiding
-`powershell.exe`, the single most common malware LOLBin.
+`--mode basic` and `--mode full` are both proven against real samples. Re-run the
+control after changing the monitors: three separate defects were caught only because a
+known-behaviour target disagreed with the output, including a Procmon noise filter that
+was hiding `powershell.exe`, the single most common malware LOLBin.
+
+### The control -- `tests/make_control.py` + `tests/check_control.py`
+
+Until 2026-11-19 this section described a control that **did not exist in the tree**.
+The monitors were rewritten on 2026-11-09 and the instruction to "re-run the control"
+could not be followed, because there was nothing to run. That is the same defect shape
+as everything else in this file: an instruction that no artifact backed.
+
+```bash
+python tests/make_control.py tests/control
+python host/mal.py detonate tests/control/control.bat --mode full --timeout 60 --elevated
+python tests/check_control.py tests/control/control_expect.json out/dynamic/<tag>
+```
+
+The control is a **.bat**, so every action it takes is readable in plain text and
+nobody has to trust a binary to verify the instrumentation. Marker `CTRL_9f3a`,
+network target `ctrl-9f3a.control.test` -- a name that exists nowhere but FakeNet, so a
+hit cannot be confused with the guest's own traffic.
+
+It does eight things, and three of them are aimed at documented blind spots rather than
+the happy path:
+
+| step | what | why that one |
+|---|---|---|
+| 2 | create **then delete** a file inside the run window | invisible to the baseline/after diff by construction; only Procmon can see it. This is brbbot's rollback, as a test |
+| 5 | write a value **nested one level** under a watched key (IFEO `Debugger`) | `Snap-Reg` records a key's own values plus only the **names** of immediate subkeys, so the subkey must appear and the value must not. Asserted as `expected_result: ABSENT` |
+| 8 | DNS + HTTP to a host only FakeNet can answer | separates "made no requests" from "FakeNet was not running" -- the distinction the getdown run showed actually changes the answer |
+
+`check_control.py` turns the run into pass/fail per check and **names the artifact that
+should have carried the evidence**, so a failure says which monitor went blind rather
+than just that something is wrong. Three outcomes are not failures:
+
+- `SKIP` -- the check needs admin and the run was unelevated, or needs FakeNet and it
+  was not up. The script reads `elevated=` out of `detonate.log` and the `fakenet` flag
+  out of `summary.json` rather than assuming either.
+- `ok` on an inverted check -- the blind spot is still blind, as documented.
+- `CHANGED` -- an inverted check started passing. Coverage improved and this file is now
+  out of date. Not a failure; a prompt to update it.
 
 ### brbbot.exe carried end to end — the worked example
 
@@ -807,6 +843,44 @@ operation mix in the footer are computed over all rows, so the numbers are right
 the listing is truncated. To see where a sample actually stopped, read `procmon.csv`
 with a real CSV reader and slice the tail -- `csv.DictReader` on
 `encoding="utf-8-sig"`, filtered on `Process Name`.
+
+## SCOPE: three criteria (set 2026-11-19)
+
+The deliverable is **Basic static, Advanced static, Basic dynamic** -- plus a conclusion.
+Advanced dynamic (debugging) and Memory Analysis are **out of scope**. That retires the
+largest outstanding build item: `dbg.py`'s guest half is no longer on the critical path,
+and `mem.py` is an optional extra rather than a required row.
+
+What this changes in practice:
+
+- `host/make_report.py` is the report generator. It takes any sample's artifacts and
+  emits all three criteria plus a conclusion, with everything that is genuinely
+  judgement marked `[TODO: ...]` and counted in the footer.
+- The `fill_report_*.py` scripts are no longer the way to report on a new sample. They
+  are two **finished** reports kept as worked examples -- hand-written prose, which is
+  what the TODOs are supposed to become.
+- The 58-row institutional template is still readable via `render_table_txt`, but the
+  three criteria are the target.
+
+```bash
+python host/make_report.py --static out/static/<tag> \
+                           [--dynamic out/dynamic/<tag>] \
+                           --out ../report/<collection>/<name>.txt
+```
+
+Proven on three shapes: static+dynamic (`getdown`, `brbbot`) and static-only
+(`lab07-01`, which has never been detonated -- section 3 comes out as an explicit stub
+with the detonate command, not a silent gap).
+
+Two things it does that a human writing by hand reliably forgets, and which exist
+because this project got both wrong at least once:
+
+1. **It prints the persistence coverage statement every time** -- which classes were
+   checked and which are not monitored at all. "No persistence found" and "no
+   persistence exists" are different claims.
+2. **It labels the instrument.** A FakeNet run installs `WinDivert1.3` and redirects
+   everything to `192.0.2.123`. Both appear in the artifacts; the generator flags them
+   inline where they appear rather than leaving them to be misread as sample behaviour.
 
 ## Writing the report — `host/fill_report.py`
 
@@ -1146,7 +1220,14 @@ enforced.
 
 What is **not** fixed, and matters before the next report:
 
-- `detonate.ps1` still has no WMI, COM-hijack, DLL-search-order, IFEO or AppInit
+- **The IFEO claim below was wrong and is corrected here.** `Image File Execution
+  Options` IS in `$RegKeys` (`detonate.ps1:139`), so it is watched -- but `Snap-Reg`
+  records each listed key's own values plus only the **names** of its immediate
+  subkeys. A new IFEO `<exe>` subkey is therefore visible while the `Debugger` value
+  inside it is not, and an IFEO entry added under an existing subkey is invisible
+  entirely. The same shallowness hides `ServiceDll` inside a service's `Parameters`.
+  Shallow coverage reads as coverage, which is worse than the gap it replaced.
+- `detonate.ps1` still has no WMI, COM-hijack, DLL-search-order or AppInit
   monitoring. Unchanged: say which persistence classes were *checked*.
 - `dbg.py`'s guest half still does not exist, so the template's **Debugging** row has no
   first-hand data for any sample. The cheap substitute is dumping the RWX regions out of
